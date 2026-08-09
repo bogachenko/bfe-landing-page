@@ -1,0 +1,204 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  background: #fafafa;
+  color: #111827;
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+::selection {
+  background: #f47b20;
+  color: #ffffff;
+}
+
+.landing {
+  width: 100%;
+  max-width: 28rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6rem;
+  animation: landing-enter 1s ease both;
+}
+
+.logo-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.logo {
+  display: block;
+  width: 18rem;
+  height: auto;
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.05));
+}
+
+.actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3rem;
+}
+
+.email-link {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: #6b7280;
+  text-decoration: none;
+  transition: all 300ms ease;
+}
+
+.email-link:hover {
+  color: #f47b20;
+  transform: translateY(-0.125rem);
+}
+
+.email-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem;
+  background: #ffffff;
+  border-radius: 9999px;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  transition: box-shadow 150ms ease;
+}
+
+.email-link:hover .email-icon-wrap {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+.email-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: #f47b20;
+  opacity: 0.8;
+  transition: opacity 150ms ease;
+}
+
+.email-link:hover .email-icon {
+  opacity: 1;
+}
+
+.email-text {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 300;
+  letter-spacing: 0.025em;
+}
+
+.disk-button {
+  position: relative;
+  width: 16rem;
+  padding: 1rem 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  overflow: hidden;
+  color: #68b646;
+  background: #ffffff;
+  border: 1px solid rgb(104 182 70 / 0.3);
+  border-radius: 9999px;
+  text-decoration: none;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  transition: all 500ms ease;
+}
+
+.disk-button:hover {
+  border-color: #68b646;
+  box-shadow: 0 10px 40px -10px rgb(104 182 70 / 0.4);
+}
+
+.disk-button-fill {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, #68b646, #5a9c3d);
+  transform: translateY(101%);
+  transition: transform 500ms ease-out;
+}
+
+.disk-button:hover .disk-button-fill {
+  transform: translateY(0);
+}
+
+.disk-icon,
+.disk-text {
+  position: relative;
+  z-index: 1;
+  transition: color 500ms ease;
+}
+
+.disk-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.disk-text {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 500;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.disk-button:hover .disk-icon,
+.disk-button:hover .disk-text {
+  color: #ffffff;
+}
+
+@keyframes landing-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (min-width: 48rem) {
+  .logo {
+    width: 20rem;
+  }
+
+  .email-text {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing {
+    animation: none;
+  }
+
+  .email-link,
+  .email-icon-wrap,
+  .email-icon,
+  .disk-button,
+  .disk-button-fill,
+  .disk-icon,
+  .disk-text {
+    transition: none;
+  }
+}
