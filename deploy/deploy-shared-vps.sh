@@ -141,7 +141,7 @@ sed "s/__BFE_PUBLIC_HOST__/$BFE_PUBLIC_HOST_CANONICAL/g" \
   "$REPO_ROOT/index.html" > "$local_tmp/index.html"
 cp "$REPO_ROOT/styles.css" "$local_tmp/styles.css"
 
-rsync -a --delete --delete-excluded \
+rsync -a --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r --delete --delete-excluded \
   --include='/index.html' \
   --include='/styles.css' \
   --exclude='*' \
