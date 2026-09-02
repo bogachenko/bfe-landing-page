@@ -10,9 +10,10 @@ REMOTE_WEB_ROOT="/var/www/bfe-landing-page"
 
 : "${BFE_VPS_SSH_TARGET:?set BFE_VPS_SSH_TARGET in the environment}"
 : "${BFE_LANDING_HOST:?set BFE_LANDING_HOST in the environment}"
+: "${BFE_PUBLIC_HOST:?set BFE_PUBLIC_HOST in the environment}"
 : "${BFE_ACME_EMAIL:?set BFE_ACME_EMAIL in the environment}"
 
-for command in ssh rsync python3 sed mktemp; do
+for command in ssh rsync python3 sed mktemp grep cp; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'ERROR: required command is missing: %s\n' "$command" >&2
     exit 1
@@ -37,6 +38,32 @@ print(host)
 PY
 )" || {
   printf 'ERROR: invalid BFE_LANDING_HOST\n' >&2
+  exit 1
+}
+
+BFE_PUBLIC_HOST_CANONICAL="$(python3 - "$BFE_PUBLIC_HOST" <<'PY'
+import re, sys
+host = sys.argv[1]
+if not host or any(ch.isspace() for ch in host) or "://" in host or "/" in host or ":" in host:
+    raise SystemExit(1)
+try:
+    host = host.encode("idna").decode("ascii").lower().rstrip(".")
+except UnicodeError:
+    raise SystemExit(1)
+if len(host) > 253 or "." not in host:
+    raise SystemExit(1)
+for label in host.split("."):
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label):
+        raise SystemExit(1)
+print(host)
+PY
+)" || {
+  printf 'ERROR: invalid BFE_PUBLIC_HOST\n' >&2
+  exit 1
+}
+
+[[ "$BFE_LANDING_HOST_CANONICAL" != "$BFE_PUBLIC_HOST_CANONICAL" ]] || {
+  printf 'ERROR: BFE_LANDING_HOST and BFE_PUBLIC_HOST must be different hosts\n' >&2
   exit 1
 }
 
@@ -76,6 +103,11 @@ for path in \
   }
 done
 
+grep -Fq 'href="https://__BFE_PUBLIC_HOST__/sign-in"' "$REPO_ROOT/index.html" || {
+  printf 'ERROR: landing Drive link template is missing from index.html\n' >&2
+  exit 1
+}
+
 ssh_args=(-o IdentitiesOnly=yes)
 if [[ -n "${BFE_VPS_SSH_IDENTITY_FILE:-}" ]]; then
   [[ "$BFE_VPS_SSH_IDENTITY_FILE" = /* && -r "$BFE_VPS_SSH_IDENTITY_FILE" ]] || {
@@ -99,19 +131,23 @@ sudo -n install -d -o root -g root -m 0755 /var/lib/letsencrypt
 sudo -n install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 '
 
-rsync -a --delete --delete-excluded \
-  --include='/index.html' \
-  --include='/styles.css' \
-  --exclude='*' \
-  -e "$rsync_ssh" \
-  "$REPO_ROOT/" \
-  "$BFE_VPS_SSH_TARGET:$REMOTE_WEB_ROOT/"
-
 local_tmp="$(mktemp -d)"
 cleanup_local() {
   rm -rf "$local_tmp"
 }
 trap cleanup_local EXIT
+
+sed "s/__BFE_PUBLIC_HOST__/$BFE_PUBLIC_HOST_CANONICAL/g" \
+  "$REPO_ROOT/index.html" > "$local_tmp/index.html"
+cp "$REPO_ROOT/styles.css" "$local_tmp/styles.css"
+
+rsync -a --delete --delete-excluded \
+  --include='/index.html' \
+  --include='/styles.css' \
+  --exclude='*' \
+  -e "$rsync_ssh" \
+  "$local_tmp/" \
+  "$BFE_VPS_SSH_TARGET:$REMOTE_WEB_ROOT/"
 
 sed "s/__BFE_LANDING_HOST__/$BFE_LANDING_HOST_CANONICAL/g" \
   "$NGINX_ACME_SOURCE" > "$local_tmp/acme.conf"
