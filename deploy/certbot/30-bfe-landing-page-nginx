@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ "${RENEWED_LINEAGE:-}" != "/etc/letsencrypt/live/__BFE_LANDING_HOST__" ]; then
+    exit 0
+fi
+
+# The shared BFE VPS already has a Backend-owned global Nginx reload hook.
+# Avoid a duplicate reload there, while remaining self-sufficient on a
+# standalone landing host where that hook does not exist.
+if [ -x /etc/letsencrypt/renewal-hooks/deploy/20-bfe-drive-nginx ]; then
+    exit 0
+fi
+
+if ! /usr/sbin/nginx -t; then
+    printf '%s\n' 'bfe-landing-page certbot hook: nginx configuration check failed' >&2
+    exit 1
+fi
+
+exec /bin/systemctl reload nginx

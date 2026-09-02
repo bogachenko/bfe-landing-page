@@ -3,32 +3,78 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-NGINX_SOURCE="$SCRIPT_DIR/nginx/bfe-landing-page.locations.conf"
+NGINX_ACME_SOURCE="$SCRIPT_DIR/nginx/bfe-landing-page.acme.conf"
+NGINX_FINAL_SOURCE="$SCRIPT_DIR/nginx/bfe-landing-page.conf"
+CERTBOT_HOOK_SOURCE="$SCRIPT_DIR/certbot/30-bfe-landing-page-nginx"
 REMOTE_WEB_ROOT="/var/www/bfe-landing-page"
-REMOTE_NGINX_DIR="/etc/nginx/snippets/bfe-drive.local.d"
-REMOTE_NGINX_FILE="$REMOTE_NGINX_DIR/bfe-landing-page.conf"
 
 : "${BFE_VPS_SSH_TARGET:?set BFE_VPS_SSH_TARGET in the environment}"
+: "${BFE_LANDING_HOST:?set BFE_LANDING_HOST in the environment}"
+: "${BFE_ACME_EMAIL:?set BFE_ACME_EMAIL in the environment}"
 
-for command in ssh rsync; do
+for command in ssh rsync python3 sed mktemp; do
   command -v "$command" >/dev/null 2>&1 || {
     printf 'ERROR: required command is missing: %s\n' "$command" >&2
     exit 1
   }
 done
 
-[[ -s "$REPO_ROOT/index.html" ]] || {
-  printf 'ERROR: landing page is missing: %s\n' "$REPO_ROOT/index.html" >&2
+BFE_LANDING_HOST_CANONICAL="$(python3 - "$BFE_LANDING_HOST" <<'PY'
+import re, sys
+host = sys.argv[1]
+if not host or any(ch.isspace() for ch in host) or "://" in host or "/" in host or ":" in host:
+    raise SystemExit(1)
+try:
+    host = host.encode("idna").decode("ascii").lower().rstrip(".")
+except UnicodeError:
+    raise SystemExit(1)
+if len(host) > 253 or "." not in host:
+    raise SystemExit(1)
+for label in host.split("."):
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label):
+        raise SystemExit(1)
+print(host)
+PY
+)" || {
+  printf 'ERROR: invalid BFE_LANDING_HOST\n' >&2
   exit 1
 }
-[[ -s "$REPO_ROOT/styles.css" ]] || {
-  printf 'ERROR: landing stylesheet is missing: %s\n' "$REPO_ROOT/styles.css" >&2
+
+BFE_ACME_EMAIL_CANONICAL="$(python3 - "$BFE_ACME_EMAIL" <<'PY'
+import re, sys
+value = sys.argv[1]
+if not value or any(ch.isspace() for ch in value) or value.count("@") != 1:
+    raise SystemExit(1)
+local, domain = value.rsplit("@", 1)
+if not re.fullmatch(r"[A-Za-z0-9.!#$%&+*/=?^_{}|~-]+", local):
+    raise SystemExit(1)
+try:
+    domain = domain.encode("idna").decode("ascii").lower().rstrip(".")
+except UnicodeError:
+    raise SystemExit(1)
+if len(local.encode()) > 64 or len(domain) > 253 or "." not in domain:
+    raise SystemExit(1)
+for label in domain.split("."):
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label):
+        raise SystemExit(1)
+print(f"{local}@{domain}")
+PY
+)" || {
+  printf 'ERROR: invalid BFE_ACME_EMAIL\n' >&2
   exit 1
 }
-[[ -s "$NGINX_SOURCE" ]] || {
-  printf 'ERROR: landing Nginx source is missing: %s\n' "$NGINX_SOURCE" >&2
-  exit 1
-}
+
+for path in \
+  "$REPO_ROOT/index.html" \
+  "$REPO_ROOT/styles.css" \
+  "$NGINX_ACME_SOURCE" \
+  "$NGINX_FINAL_SOURCE" \
+  "$CERTBOT_HOOK_SOURCE"; do
+  [[ -s "$path" ]] || {
+    printf 'ERROR: required deployment source is missing: %s\n' "$path" >&2
+    exit 1
+  }
+done
 
 ssh_args=(-o IdentitiesOnly=yes)
 if [[ -n "${BFE_VPS_SSH_IDENTITY_FILE:-}" ]]; then
@@ -44,16 +90,13 @@ fi
 ssh_remote=(ssh "${ssh_args[@]}" "$BFE_VPS_SSH_TARGET")
 printf -v rsync_ssh '%q ' ssh "${ssh_args[@]}"
 
-"${ssh_remote[@]}" 'sudo -n grep -Fq "include /etc/nginx/snippets/bfe-drive.local.d/*.conf;" /etc/nginx/conf.d/bfe-drive.conf' || {
-  printf 'ERROR: Backend Nginx local-extension hook is not active on the target VPS\n' >&2
-  exit 1
-}
-
 "${ssh_remote[@]}" 'set -eu
 user_name="$(id -un)"
 group_name="$(id -gn)"
 sudo -n install -d -o "$user_name" -g "$group_name" -m 0755 /var/www/bfe-landing-page
-sudo -n install -d -o root -g root -m 0755 /etc/nginx/snippets/bfe-drive.local.d
+sudo -n install -d -o root -g root -m 0755 /etc/nginx/conf.d
+sudo -n install -d -o root -g root -m 0755 /var/lib/letsencrypt
+sudo -n install -d -o root -g root -m 0755 /etc/letsencrypt/renewal-hooks/deploy
 '
 
 rsync -a --delete --delete-excluded \
@@ -64,39 +107,146 @@ rsync -a --delete --delete-excluded \
   "$REPO_ROOT/" \
   "$BFE_VPS_SSH_TARGET:$REMOTE_WEB_ROOT/"
 
-remote_tmp="/tmp/bfe-landing-page.locations.$$"
-rsync -a -e "$rsync_ssh" "$NGINX_SOURCE" "$BFE_VPS_SSH_TARGET:$remote_tmp"
-
-"${ssh_remote[@]}" "set -euo pipefail
-source_file='$remote_tmp'
-target_file='$REMOTE_NGINX_FILE'
-backup_file=''
-cleanup() {
-  rm -f \"\$source_file\"
-  if [[ -n \"\$backup_file\" ]]; then
-    rm -f \"\$backup_file\"
-  fi
+local_tmp="$(mktemp -d)"
+cleanup_local() {
+  rm -rf "$local_tmp"
 }
-trap cleanup EXIT
+trap cleanup_local EXIT
 
-if sudo -n test -f \"\$target_file\"; then
-  backup_file=\"\$(mktemp)\"
-  sudo -n cp \"\$target_file\" \"\$backup_file\"
+sed "s/__BFE_LANDING_HOST__/$BFE_LANDING_HOST_CANONICAL/g" \
+  "$NGINX_ACME_SOURCE" > "$local_tmp/acme.conf"
+sed "s/__BFE_LANDING_HOST__/$BFE_LANDING_HOST_CANONICAL/g" \
+  "$NGINX_FINAL_SOURCE" > "$local_tmp/final.conf"
+sed "s/__BFE_LANDING_HOST__/$BFE_LANDING_HOST_CANONICAL/g" \
+  "$CERTBOT_HOOK_SOURCE" > "$local_tmp/certbot-hook"
+
+remote_token="$$"
+remote_acme="/tmp/bfe-landing-page.acme.$remote_token"
+remote_final="/tmp/bfe-landing-page.final.$remote_token"
+remote_hook="/tmp/bfe-landing-page.certbot-hook.$remote_token"
+rsync -a -e "$rsync_ssh" "$local_tmp/acme.conf" "$BFE_VPS_SSH_TARGET:$remote_acme"
+rsync -a -e "$rsync_ssh" "$local_tmp/final.conf" "$BFE_VPS_SSH_TARGET:$remote_final"
+rsync -a -e "$rsync_ssh" "$local_tmp/certbot-hook" "$BFE_VPS_SSH_TARGET:$remote_hook"
+
+"${ssh_remote[@]}" "exec sudo -n env \
+BFE_LANDING_HOST='$BFE_LANDING_HOST_CANONICAL' \
+BFE_ACME_EMAIL='$BFE_ACME_EMAIL_CANONICAL' \
+REMOTE_ACME='$remote_acme' \
+REMOTE_FINAL='$remote_final' \
+REMOTE_HOOK='$remote_hook' \
+bash -s" <<'REMOTE'
+set -euo pipefail
+
+target_file=/etc/nginx/conf.d/bfe-landing-page.conf
+legacy_file=/etc/nginx/snippets/bfe-drive.local.d/bfe-landing-page.conf
+hook_file=/etc/letsencrypt/renewal-hooks/deploy/30-bfe-landing-page-nginx
+target_backup="$(mktemp)"
+legacy_backup="$(mktemp)"
+hook_backup="$(mktemp)"
+had_target=0
+had_legacy=0
+had_hook=0
+committed=0
+
+if test -f "$target_file"; then
+  cp "$target_file" "$target_backup"
+  had_target=1
+fi
+if test -f "$legacy_file"; then
+  cp "$legacy_file" "$legacy_backup"
+  had_legacy=1
+fi
+if test -f "$hook_file"; then
+  cp "$hook_file" "$hook_backup"
+  had_hook=1
 fi
 
-sudo -n install -o root -g root -m 0644 \"\$source_file\" \"\$target_file\"
-if ! sudo -n nginx -t; then
-  if [[ -n \"\$backup_file\" ]]; then
-    sudo -n install -o root -g root -m 0644 \"\$backup_file\" \"\$target_file\"
+rollback() {
+  if [[ "$had_target" -eq 1 ]]; then
+    install -o root -g root -m 0644 "$target_backup" "$target_file"
   else
-    sudo -n rm -f \"\$target_file\"
+    rm -f "$target_file"
   fi
-  sudo -n nginx -t >/dev/null 2>&1 || true
-  exit 1
+  if [[ "$had_legacy" -eq 1 ]]; then
+    install -d -o root -g root -m 0755 "$(dirname "$legacy_file")"
+    install -o root -g root -m 0644 "$legacy_backup" "$legacy_file"
+  else
+    rm -f "$legacy_file"
+  fi
+  if [[ "$had_hook" -eq 1 ]]; then
+    install -o root -g root -m 0755 "$hook_backup" "$hook_file"
+  else
+    rm -f "$hook_file"
+  fi
+  nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+}
+
+finish() {
+  status=$?
+  trap - EXIT
+  if [[ "$status" -ne 0 && "$committed" -ne 1 ]]; then
+    rollback
+  fi
+  rm -f "$REMOTE_ACME" "$REMOTE_FINAL" "$REMOTE_HOOK" \
+    "$target_backup" "$legacy_backup" "$hook_backup"
+  exit "$status"
+}
+trap finish EXIT
+
+# Migrate away from the earlier incorrect design where landing locations were
+# injected into the BFE Drive vhost.
+rm -f "$legacy_file"
+
+validate_certificate() {
+  cert="/etc/letsencrypt/live/$BFE_LANDING_HOST/cert.pem"
+  key="/etc/letsencrypt/live/$BFE_LANDING_HOST/privkey.pem"
+  test -s "$cert" && test -s "$key" &&
+    openssl x509 -in "$cert" -noout -checkhost "$BFE_LANDING_HOST" >/dev/null 2>&1 &&
+    openssl x509 -in "$cert" -noout -checkend 86400 >/dev/null 2>&1 &&
+    openssl pkey -in "$key" -noout >/dev/null 2>&1
+}
+
+if ! validate_certificate; then
+  if test -e "/etc/letsencrypt/renewal/$BFE_LANDING_HOST.conf" || \
+     test -e "/etc/letsencrypt/live/$BFE_LANDING_HOST"; then
+    printf 'ERROR: existing Certbot lineage for %s is incomplete or invalid\n' "$BFE_LANDING_HOST" >&2
+    exit 1
+  fi
+
+  install -o root -g root -m 0644 "$REMOTE_ACME" "$target_file"
+  nginx -t
+  systemctl reload nginx
+  systemctl is-active --quiet nginx
+
+  test -x /snap/bin/certbot || {
+    printf 'ERROR: /snap/bin/certbot is not installed on the target VPS\n' >&2
+    exit 1
+  }
+
+  /snap/bin/certbot certonly \
+    --non-interactive \
+    --agree-tos \
+    --email "$BFE_ACME_EMAIL" \
+    --webroot \
+    --webroot-path /var/lib/letsencrypt \
+    --preferred-challenges http \
+    --cert-name "$BFE_LANDING_HOST" \
+    --key-type ecdsa \
+    --elliptic-curve secp256r1 \
+    -d "$BFE_LANDING_HOST"
+
+  validate_certificate || {
+    printf 'ERROR: landing certificate validation failed after issuance\n' >&2
+    exit 1
+  }
 fi
 
-sudo -n systemctl reload nginx
-sudo -n systemctl is-active --quiet nginx
-"
+install -o root -g root -m 0755 "$REMOTE_HOOK" "$hook_file"
+install -o root -g root -m 0644 "$REMOTE_FINAL" "$target_file"
+nginx -t
+systemctl reload nginx
+systemctl is-active --quiet nginx
+committed=1
+REMOTE
 
-printf 'BFE landing page shared-VPS deployment: OK\n'
+printf 'BFE landing page deployment: OK (%s)\n' "$BFE_LANDING_HOST_CANONICAL"

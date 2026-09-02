@@ -3,28 +3,56 @@
 This repository owns the public landing page independently from the BFE Drive
 Web client and Backend.
 
-## Shared VPS
+## Public host
 
-The production HTTPS server exposes the generic local Nginx extension boundary:
+The landing page is served from `BFE_LANDING_HOST`. BFE Drive uses the separate
+`BFE_PUBLIC_HOST` hostname.
 
-```nginx
-include /etc/nginx/snippets/bfe-drive.local.d/*.conf;
+A typical shell configuration is:
+
+```bash
+export BFE_LANDING_HOST='webshopstudio.ru'
+export BFE_PUBLIC_HOST="drive.${BFE_LANDING_HOST}"
 ```
 
-`deploy/nginx/bfe-landing-page.locations.conf` is installed into that boundary
-as `/etc/nginx/snippets/bfe-drive.local.d/bfe-landing-page.conf`.
+The same deployment layout therefore also supports, for example:
 
-The landing page owns only:
+```bash
+export BFE_LANDING_HOST='any_word.com'
+export BFE_PUBLIC_HOST="disk.${BFE_LANDING_HOST}"
+```
 
-- `/`
-- `/styles.css`
+`BFE_LANDING_HOST` and `BFE_PUBLIC_HOST` are intentionally independent inputs;
+the deployment does not attempt to derive the registrable/root domain by
+stripping labels from another hostname.
 
-The Flutter client independently owns `/sign-in`, `/oauth/callback`, its
-application routes and Flutter assets. Backend routes remain Backend-owned.
+## VPS hosting
+
+The landing deployment owns its complete Nginx vhost at:
+
+```text
+/etc/nginx/conf.d/bfe-landing-page.conf
+```
+
+It does not use the BFE Drive local-extension directory and does not modify the
+Backend-owned `bfe-drive.conf`.
+
+The deployment:
+
+- synchronizes `index.html` and `styles.css` to `/var/www/bfe-landing-page`;
+- removes the legacy landing fragment from the Drive vhost when present;
+- provisions the `BFE_LANDING_HOST` Let's Encrypt certificate through HTTP-01
+  webroot validation when no valid certificate exists;
+- installs the landing-owned HTTP/HTTPS Nginx vhost;
+- validates Nginx before reload;
+- installs a renewal reload hook that remains usable if the landing page is
+  later moved to a standalone VPS.
 
 Required operator environment:
 
 ```text
+BFE_LANDING_HOST
+BFE_ACME_EMAIL
 BFE_VPS_SSH_TARGET
 ```
 
@@ -40,7 +68,5 @@ Deploy from the repository root with:
 make deploy-real
 ```
 
-The deployment synchronizes only `index.html` and `styles.css` into
-`/var/www/bfe-landing-page`, installs the landing-owned Nginx fragment, validates
-the complete Nginx configuration and reloads Nginx only after validation
-succeeds.
+The DNS A/AAAA records for `BFE_LANDING_HOST` must already resolve to the target
+VPS before first certificate issuance.
