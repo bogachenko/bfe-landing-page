@@ -26,6 +26,15 @@ export BFE_PUBLIC_HOST="disk.${BFE_LANDING_HOST}"
 the deployment does not attempt to derive the registrable/root domain by
 stripping labels from another hostname.
 
+The landing `Drive` action is rendered at deploy time to:
+
+```text
+https://<BFE_PUBLIC_HOST>/sign-in
+```
+
+so changing `BFE_PUBLIC_HOST` also changes the authorization-entry target without
+editing `index.html` for a specific domain.
+
 ## VPS hosting
 
 The landing deployment owns its complete Nginx vhost at:
@@ -39,7 +48,9 @@ Backend-owned `bfe-drive.conf`.
 
 The deployment:
 
-- synchronizes `index.html` and `styles.css` to `/var/www/bfe-landing-page`;
+- renders the landing `Drive` action from `BFE_PUBLIC_HOST`;
+- synchronizes the rendered `index.html` and `styles.css` to
+  `/var/www/bfe-landing-page`;
 - removes the legacy landing fragment from the Drive vhost when present;
 - provisions the `BFE_LANDING_HOST` Let's Encrypt certificate through HTTP-01
   webroot validation when no valid certificate exists;
@@ -52,6 +63,7 @@ Required operator environment:
 
 ```text
 BFE_LANDING_HOST
+BFE_PUBLIC_HOST
 BFE_ACME_EMAIL
 BFE_VPS_SSH_TARGET
 ```
