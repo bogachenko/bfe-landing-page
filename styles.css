@@ -128,7 +128,7 @@ body {
   background:
     linear-gradient(#ffffff, #ffffff) padding-box,
     linear-gradient(to right, #68b646, #5a9c3d) border-box;
-  box-shadow: 0 10px 40px -10px rgb(104 182 70 / 0.4);
+  box-shadow: none;
 }
 
 .disk-button-fill {
