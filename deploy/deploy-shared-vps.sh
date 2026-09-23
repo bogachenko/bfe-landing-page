@@ -93,6 +93,8 @@ PY
 
 for path in \
   "$REPO_ROOT/index.html" \
+  "$REPO_ROOT/privacy.html" \
+  "$REPO_ROOT/account-deletion.html" \
   "$REPO_ROOT/styles.css" \
   "$REPO_ROOT/favicon.svg" \
   "$REPO_ROOT/favicon.ico" \
@@ -141,12 +143,16 @@ trap cleanup_local EXIT
 
 sed "s/__BFE_PUBLIC_HOST__/$BFE_PUBLIC_HOST_CANONICAL/g" \
   "$REPO_ROOT/index.html" > "$local_tmp/index.html"
+cp "$REPO_ROOT/privacy.html" "$local_tmp/privacy.html"
+cp "$REPO_ROOT/account-deletion.html" "$local_tmp/account-deletion.html"
 cp "$REPO_ROOT/styles.css" "$local_tmp/styles.css"
 cp "$REPO_ROOT/favicon.svg" "$local_tmp/favicon.svg"
 cp "$REPO_ROOT/favicon.ico" "$local_tmp/favicon.ico"
 
 rsync -a --chmod=Du=rwx,Dgo=rx,Fu=rw,Fgo=r --delete --delete-excluded \
   --include='/index.html' \
+  --include='/privacy.html' \
+  --include='/account-deletion.html' \
   --include='/styles.css' \
   --include='/favicon.svg' \
   --include='/favicon.ico' \
